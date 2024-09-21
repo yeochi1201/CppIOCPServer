@@ -4,15 +4,16 @@
 #include <WinSock2.h>
 #include <stdio.h>
 #include <tchar.h>
+#include <sdkddkver.h>
 
 #pragma comment(lib, "ws2_32")
 
 class Listener {
 public:
 	Listener();
-	~Listener();
 private:
 	SOCKET listenSocket;
+	
 	bool ResetWinsock();
 	bool CreateSocket();
 	bool BindPort();

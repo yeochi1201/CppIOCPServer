@@ -8,10 +8,6 @@ Listener::Listener() {
 	AcceptClient();
 }
 
-Listener::~Listener() {
-	CloseSocket();
-}
-
 bool Listener::ResetWinsock() {
 	WSADATA wsa = { 0 };
 	if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
@@ -72,8 +68,9 @@ void Listener::AcceptClient() {
 			fflush(stdout);
 			memset(szBuffer, 0, sizeof(szBuffer));
 		}
+		ExitClient(&clientSocket);
 	}
-	ExitClient(&clientSocket);
+	CloseSocket();
 }
 
 void Listener::ExitClient(SOCKET* clientSocket) {
