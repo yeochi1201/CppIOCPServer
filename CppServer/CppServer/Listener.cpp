@@ -8,6 +8,24 @@ Listener::Listener() {
 	AcceptClient();
 }
 
+DWORD WINAPI ThreadFunction(LPVOID nParam) {
+	char szBuffer[128] = { 0 };
+	int nReceive = 0;
+	SOCKET clientSocket = (SOCKET)nParam;
+	puts("New Client Connected");
+
+	while ((nReceive = ::recv(clientSocket, szBuffer, sizeof(szBuffer), 0)) > 0) {
+		::send(clientSocket, szBuffer, sizeof(szBuffer), 0);
+		puts(szBuffer);
+		memset(szBuffer, 0, sizeof(szBuffer));
+	}
+
+	puts("Client Disconnect");
+	::shutdown(clientSocket, SD_BOTH);
+	::closesocket(clientSocket);
+	return 0;
+}
+
 bool Listener::ResetWinsock() {
 	WSADATA wsa = { 0 };
 	if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
@@ -55,27 +73,15 @@ void Listener::AcceptClient() {
 	SOCKADDR_IN clientAddress = { 0 };
 	int nAddrLen = sizeof(clientAddress);
 	SOCKET clientSocket = 0;
-	char szBuffer[128] = { 0 };
-	int nReceive = 0;
+	DWORD dwThreadID = 0;
+	HANDLE clientThread;
+	
 
 	while ((clientSocket = ::accept(listenSocket, (SOCKADDR*)&clientAddress, &nAddrLen)) != INVALID_SOCKET) {
-		puts("New Client Connected");
-		fflush(stdout);
-
-		while ((nReceive = ::recv(clientSocket, szBuffer, sizeof(szBuffer), 0)) > 0) {
-			::send(clientSocket, szBuffer, sizeof(szBuffer), 0);
-			puts(szBuffer);
-			fflush(stdout);
-			memset(szBuffer, 0, sizeof(szBuffer));
-		}
-		ExitClient(&clientSocket);
+		clientThread = ::CreateThread(NULL, 0, ThreadFunction, (LPVOID)clientSocket, 0, &dwThreadID);
+		::CloseHandle(clientThread);
 	}
 	CloseSocket();
-}
-
-void Listener::ExitClient(SOCKET* clientSocket) {
-	::shutdown(*clientSocket, SD_BOTH);
-	::closesocket(*clientSocket);
 }
 
 void Listener::CloseSocket() {
