@@ -4,7 +4,21 @@ Connector::Connector() {
 	ResetWinsock();
 	CreateSocket();
 	BindPort();
+	StartThread();
 	ChatMessage();
+}
+DWORD WINAPI ThreadReceive(LPVOID nParam) {
+	SOCKET clientSocket = (SOCKET)nParam;
+	char szBuffer[128] = { 0 };
+	while (1) {
+		if (::recv(clientSocket, szBuffer, sizeof(szBuffer), 0) > 0) {
+			printf("-> %s\n", szBuffer);
+			memset(szBuffer, 0, sizeof(szBuffer));
+		}
+	}
+
+	puts("Receive Thread End");
+	return 0;
 }
 
 bool Connector::ResetWinsock() {
@@ -41,20 +55,27 @@ bool Connector::BindPort() {
 }
 
 void Connector::ChatMessage() {
-	while (1) {
-		gets_s(szBuffer);
-		if (strcmp(szBuffer, "EXIT") == 0) break;
-		::send(clientSocket, szBuffer, strlen(szBuffer) + 1, 0);
-		memset(szBuffer, 0, sizeof(szBuffer));
-		::recv(clientSocket, szBuffer, sizeof(szBuffer), 0);
-		printf("From server : %s\n", szBuffer);
-	}
+	char szBuffer[128] = { 0 };
 
-	CloseSocket();
+	while (1) {
+		memset(szBuffer, 0, sizeof(szBuffer));
+		gets_s(szBuffer);
+		if (strcmp(szBuffer, "Exit") == 0)
+			break;
+		::send(clientSocket, szBuffer, strlen(szBuffer) + 1, 0);
+	}
+}
+
+void Connector::StartThread() {
+	DWORD RecvThreadID = 0;
+	DWORD SendThreadID = 1;
+	recvThread = CreateThread(NULL, 0, ThreadReceive, LPVOID(clientSocket), 0, &RecvThreadID);
+
 }
 
 void Connector::CloseSocket() {
 	puts("Close Client Socket");
+	::CloseHandle(recvThread);
 	::closesocket(clientSocket);
 	::WSACleanup();
 }
