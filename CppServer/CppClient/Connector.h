@@ -13,13 +13,14 @@ public:
 	Connector();
 private:
 	SOCKET clientSocket;
-	char szBuffer[128] = { 0 };
+
+	HANDLE recvThread;
 
 	bool ResetWinsock();
 	bool CreateSocket();
 	bool BindPort();
-	void ChatMessage();
+	void StartThread();
 	void CloseSocket();
+	void ChatMessage();
 };
-
 #endif
