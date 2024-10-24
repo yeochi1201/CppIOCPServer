@@ -10,11 +10,11 @@
 #include <list>
 #include <iterator>
 #include<Windows.h>
-
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 class Listener {
 public:
 	Listener();
-	void SendChattingMessage(char* pszParam);
+	void SendChattingMessage(char* pszParam, SOCKET clientSocket);
 private:
 	bool ResetWinsock();
 	bool CreateSocket();

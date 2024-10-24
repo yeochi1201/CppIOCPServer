@@ -43,9 +43,8 @@ DWORD WINAPI ThreadFunction(LPVOID nParam) {
 	puts("New Client Connected");
 
 	while ((nReceive = ::recv(clientSocket, szBuffer, sizeof(szBuffer), 0)) > 0) {
-		::send(clientSocket, szBuffer, sizeof(szBuffer), 0);
 		puts(szBuffer);
-		pListener->SendChattingMessage(szBuffer);
+		pListener->SendChattingMessage(szBuffer, clientSocket);
 		memset(szBuffer, 0, sizeof(szBuffer));
 	}
 
@@ -75,13 +74,16 @@ bool Listener::AddClientSocket(SOCKET clientSocket) {
 	return TRUE;
 }
 
-void Listener::SendChattingMessage(char* pszParam) {
+void Listener::SendChattingMessage(char* pszParam, SOCKET clientSocket) {
 	int msgLength = strlen(pszParam);
 	std::list<SOCKET>::iterator it;
-	
+
 	::EnterCriticalSection(&client_cs);
-	for (it = client_list.begin(); it != client_list.end(); it++) {
-		::send(*it, pszParam, sizeof(char) * (msgLength + 1), 0);
+	for (it = client_list.begin(); it != client_list.end(); ++it) {
+		if (*it != clientSocket) {
+			::send(*it, pszParam, sizeof(char) * (msgLength + 1), 0);
+			puts("Message Send");
+		}
 	}
 	::LeaveCriticalSection(&client_cs);
 }
@@ -133,14 +135,19 @@ bool Listener::WaitingClient() {
 }
 
 void Listener::AcceptClient() {
-	SOCKADDR_IN clientAddress = { 0 }; 
+	SOCKADDR_IN clientAddress = { 0 };
 	int nAddrLen = sizeof(clientAddress);
 	SOCKET clientSocket = 0;
 	DWORD dwThreadID = 0;
 	HANDLE clientThread;
 
 	while ((clientSocket = ::accept(listenSocket, (SOCKADDR*)&clientAddress, &nAddrLen)) != INVALID_SOCKET) {
-		clientThread = ::CreateThread(NULL, 0, ThreadFunction, (LPVOID)clientSocket, 0, &dwThreadID);
-		::CloseHandle(clientThread);
+		if (!AddClientSocket(clientSocket)) {
+			puts("ERROR : No More Accept Client");
+		}
+		else {
+			clientThread = ::CreateThread(NULL, 0, ThreadFunction, (LPVOID)clientSocket, 0, &dwThreadID);
+			::CloseHandle(clientThread);
+		}
 	}
 }
