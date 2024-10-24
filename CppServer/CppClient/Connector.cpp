@@ -1,5 +1,5 @@
 #include "Connector.h"
-
+#pragma warning(disable:4996)
 Connector::Connector() {
 	ResetWinsock();
 	CreateSocket();
