@@ -136,7 +136,7 @@ void Listener::ObserveClient() {
 				continue;
 
 			if (fdRead.fd_array[idx] == listenSocket) {
-				FD_SET(AcceptClient(), &fdRead);
+				AcceptClient();
 			}
 			else {
 				char buffer[1024] = { 0 };
