@@ -11,6 +11,7 @@
 #include <iterator>
 #include<Windows.h>
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
+
 class Listener {
 public:
 	Listener();
@@ -21,7 +22,8 @@ private:
 	bool BindPort();
 	bool AddClientSocket(SOCKET clientSocket);
 	bool InitCtrlHandler();
-	bool WaitingClient();
-	void AcceptClient();
+	bool WaitingClient(SOCKET listenSocket);
+	SOCKET AcceptClient();
+	void ObserveClient();
 };
 #endif
