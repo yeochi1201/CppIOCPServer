@@ -1,8 +1,7 @@
 #include "Listener.h"
 
 SOCKET listenSocket;
-std::list<SOCKET> client_list;
-CRITICAL_SECTION client_cs;
+std::list<SOCKET> socket_list;
 Listener* pListener;
 
 Listener::Listener() {
@@ -10,8 +9,8 @@ Listener::Listener() {
 	ResetWinsock();
 	CreateSocket();
 	BindPort();
-	WaitingClient();
-	AcceptClient();
+	WaitingClient(listenSocket);
+	ObserveClient();
 }
 
 bool CloseSocketHandler(DWORD dwType) {
@@ -19,14 +18,12 @@ bool CloseSocketHandler(DWORD dwType) {
 		std::list<SOCKET>::iterator it;
 		::shutdown(listenSocket, SD_BOTH);
 
-		::EnterCriticalSection(&client_cs);
-		for (it = client_list.begin(); it != client_list.end(); it++) {
+		for (it = socket_list.begin(); it != socket_list.end(); it++) {
 			::closesocket(*it);
 		}
-		client_list.clear();
+		socket_list.clear();
 
 		puts("Socket Shutdown complete");
-		::DeleteCriticalSection(&client_cs);
 		::closesocket(listenSocket);
 
 		::WSACleanup();
@@ -34,29 +31,6 @@ bool CloseSocketHandler(DWORD dwType) {
 		return TRUE;
 	}
 	return FALSE;
-}
-
-DWORD WINAPI ThreadFunction(LPVOID nParam) {
-	char szBuffer[128] = { 0 };
-	int nReceive = 0;
-	SOCKET clientSocket = (SOCKET)nParam;
-	puts("New Client Connected");
-
-	while ((nReceive = ::recv(clientSocket, szBuffer, sizeof(szBuffer), 0)) > 0) {
-		puts(szBuffer);
-		pListener->SendChattingMessage(szBuffer, clientSocket);
-		memset(szBuffer, 0, sizeof(szBuffer));
-	}
-
-	::EnterCriticalSection(&client_cs);
-	client_list.remove(clientSocket);
-	::LeaveCriticalSection(&client_cs);
-
-	puts("Client Disconnect");
-	::shutdown(clientSocket, SD_BOTH);
-	::closesocket(clientSocket);
-
-	return 0;
 }
 
 bool Listener::InitCtrlHandler() {
@@ -67,10 +41,8 @@ bool Listener::InitCtrlHandler() {
 }
 
 bool Listener::AddClientSocket(SOCKET clientSocket) {
-	::EnterCriticalSection(&client_cs);
-	client_list.push_back(clientSocket);
-	::LeaveCriticalSection(&client_cs);
-	puts("New Client Comein");
+	socket_list.push_back(clientSocket);
+	puts("New Client Come In");
 	return TRUE;
 }
 
@@ -78,14 +50,12 @@ void Listener::SendChattingMessage(char* pszParam, SOCKET clientSocket) {
 	int msgLength = strlen(pszParam);
 	std::list<SOCKET>::iterator it;
 
-	::EnterCriticalSection(&client_cs);
-	for (it = client_list.begin(); it != client_list.end(); ++it) {
-		if (*it != clientSocket) {
+
+	for (it = socket_list.begin(); it != socket_list.end(); ++it) {
+		if (*it != clientSocket && *it != listenSocket) {
 			::send(*it, pszParam, sizeof(char) * (msgLength + 1), 0);
-			puts("Message Send");
 		}
 	}
-	::LeaveCriticalSection(&client_cs);
 }
 
 bool Listener::ResetWinsock() {
@@ -101,7 +71,6 @@ bool Listener::ResetWinsock() {
 bool Listener::CreateSocket() {
 	InitCtrlHandler();
 	listenSocket = ::socket(AF_INET, SOCK_STREAM, 0);
-	::InitializeCriticalSection(&client_cs);
 
 	if (listenSocket == INVALID_SOCKET) {
 		puts("ERROR : Failed to Create Listen Socket");
@@ -125,29 +94,66 @@ bool Listener::BindPort() {
 	return true;
 }
 
-bool Listener::WaitingClient() {
+bool Listener::WaitingClient(SOCKET listenSocket) {
 	if (::listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
 		puts("ERROR : Failed to Listen");
 		return false;
 	}
 	puts("Waiting Client");
+	socket_list.push_back(listenSocket);
 	return true;
 }
 
-void Listener::AcceptClient() {
+
+SOCKET Listener::AcceptClient() {
 	SOCKADDR_IN clientAddress = { 0 };
 	int nAddrLen = sizeof(clientAddress);
 	SOCKET clientSocket = 0;
-	DWORD dwThreadID = 0;
-	HANDLE clientThread;
 
-	while ((clientSocket = ::accept(listenSocket, (SOCKADDR*)&clientAddress, &nAddrLen)) != INVALID_SOCKET) {
+	if((clientSocket = ::accept(listenSocket, (SOCKADDR*)&clientAddress, &nAddrLen)) != INVALID_SOCKET) {
 		if (!AddClientSocket(clientSocket)) {
 			puts("ERROR : No More Accept Client");
-		}
-		else {
-			clientThread = ::CreateThread(NULL, 0, ThreadFunction, (LPVOID)clientSocket, 0, &dwThreadID);
-			::CloseHandle(clientThread);
+			return NULL;
 		}
 	}
+	return clientSocket;
+}
+
+void Listener::ObserveClient() {
+	UINT nCount;
+	FD_SET fdRead;
+	std::list<SOCKET>::iterator it;
+	
+	puts("Start IO MultiPlexing Chatting Server");
+	do {
+		FD_ZERO(&fdRead);
+		for (it = socket_list.begin(); it != socket_list.end(); it++) {
+			FD_SET(*it, &fdRead);
+		}
+
+		::select(0, &fdRead, NULL, NULL, NULL);
+
+		nCount = fdRead.fd_count;
+		for (int idx = 0; idx < nCount; idx++) {
+			if(!FD_ISSET(fdRead.fd_array[idx], &fdRead))
+				continue;
+
+			if (fdRead.fd_array[idx] == listenSocket) {
+				AcceptClient();
+			}
+			else {
+				char buffer[1024] = { 0 };
+				int receive = ::recv(fdRead.fd_array[idx], buffer, sizeof(buffer), 0);
+				if (receive < 0) {
+					::closesocket(fdRead.fd_array[idx]);
+					FD_CLR(fdRead.fd_array[idx], &fdRead);
+					socket_list.remove(fdRead.fd_array[idx]);
+					puts("Client Disconnect");
+				}
+				else
+					puts(buffer);
+					SendChattingMessage(buffer, fdRead.fd_array[idx]);
+			}
+		}
+	} while (listenSocket != NULL);
 }
