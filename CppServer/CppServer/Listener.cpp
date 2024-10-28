@@ -32,6 +32,7 @@ bool CloseSocketHandler(DWORD dwType) {
 	}
 	return FALSE;
 }
+
 bool Listener::InitCtrlHandler() {
 	if (::SetConsoleCtrlHandler((PHANDLER_ROUTINE)CloseSocketHandler, TRUE) == FALSE) {
 		puts("ERROR : Ctrl Handler Setting Failed");
@@ -48,6 +49,7 @@ bool Listener::AddClientSocket(SOCKET clientSocket) {
 void Listener::SendChattingMessage(char* pszParam, SOCKET clientSocket) {
 	int msgLength = strlen(pszParam);
 	std::list<SOCKET>::iterator it;
+
 
 	for (it = socket_list.begin(); it != socket_list.end(); ++it) {
 		if (*it != clientSocket && *it != listenSocket) {
@@ -101,6 +103,7 @@ bool Listener::WaitingClient(SOCKET listenSocket) {
 	socket_list.push_back(listenSocket);
 	return true;
 }
+
 
 SOCKET Listener::AcceptClient() {
 	SOCKADDR_IN clientAddress = { 0 };
