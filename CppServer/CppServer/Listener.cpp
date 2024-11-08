@@ -1,30 +1,19 @@
 #include "Listener.h"
 
 SOCKET listenSocket;
-std::list<SOCKET> socket_list;
+
 Listener* pListener;
 
 Listener::Listener() {
 	pListener = this;
-	ResetWinsock();
-	CreateSocket();
-	BindPort();
-	WaitingClient(listenSocket);
-	ObserveClient();
+	StartProgram();
 }
 
-bool CloseSocketHandler(DWORD dwType) {
+bool Listener::CloseSocketHandler(DWORD dwType) {
 	if (dwType == CTRL_C_EVENT) {
-		std::list<SOCKET>::iterator it;
-		::shutdown(listenSocket, SD_BOTH);
 
-		for (it = socket_list.begin(); it != socket_list.end(); it++) {
-			::closesocket(*it);
-		}
-		socket_list.clear();
-
+		CloseServer();
 		puts("Socket Shutdown complete");
-		::closesocket(listenSocket);
 
 		::WSACleanup();
 		exit(0);
@@ -33,16 +22,23 @@ bool CloseSocketHandler(DWORD dwType) {
 	return FALSE;
 }
 
+bool WINAPI StaticCloseSocketHandler(DWORD dwType) {
+	return (pListener->CloseSocketHandler(dwType));
+}
+
 bool Listener::InitCtrlHandler() {
-	if (::SetConsoleCtrlHandler((PHANDLER_ROUTINE)CloseSocketHandler, TRUE) == FALSE) {
+	if (::SetConsoleCtrlHandler((PHANDLER_ROUTINE)(StaticCloseSocketHandler), TRUE) == FALSE) {
 		puts("ERROR : Ctrl Handler Setting Failed");
 	}
 	return TRUE;
 }
 
-bool Listener::AddClientSocket(SOCKET clientSocket) {
-	socket_list.push_back(clientSocket);
-	puts("New Client Come In");
+bool Listener::InitIOCPHandler() {
+	IOCP_Handler = ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+	if (IOCP_Handler == NULL) {
+		puts("ERROR : Cant Create IOCP");
+		return FALSE;
+	}
 	return TRUE;
 }
 
@@ -50,12 +46,13 @@ void Listener::SendChattingMessage(char* pszParam, SOCKET clientSocket) {
 	int msgLength = strlen(pszParam);
 	std::list<SOCKET>::iterator it;
 
-
+	::EnterCriticalSection(&socket_cs);
 	for (it = socket_list.begin(); it != socket_list.end(); ++it) {
 		if (*it != clientSocket && *it != listenSocket) {
 			::send(*it, pszParam, sizeof(char) * (msgLength + 1), 0);
 		}
 	}
+	::LeaveCriticalSection(&socket_cs);
 }
 
 bool Listener::ResetWinsock() {
@@ -70,7 +67,7 @@ bool Listener::ResetWinsock() {
 
 bool Listener::CreateSocket() {
 	InitCtrlHandler();
-	listenSocket = ::socket(AF_INET, SOCK_STREAM, 0);
+	listenSocket = ::WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
 
 	if (listenSocket == INVALID_SOCKET) {
 		puts("ERROR : Failed to Create Listen Socket");
@@ -97,63 +94,167 @@ bool Listener::BindPort() {
 bool Listener::WaitingClient(SOCKET listenSocket) {
 	if (::listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
 		puts("ERROR : Failed to Listen");
+		CloseServer();
 		return false;
 	}
 	puts("Waiting Client");
-	socket_list.push_back(listenSocket);
 	return true;
 }
 
-
-SOCKET Listener::AcceptClient() {
-	SOCKADDR_IN clientAddress = { 0 };
-	int nAddrLen = sizeof(clientAddress);
-	SOCKET clientSocket = 0;
-
-	if((clientSocket = ::accept(listenSocket, (SOCKADDR*)&clientAddress, &nAddrLen)) != INVALID_SOCKET) {
-		if (!AddClientSocket(clientSocket)) {
-			puts("ERROR : No More Accept Client");
-			return NULL;
-		}
-	}
-	return clientSocket;
+void Listener::CloseClient(SOCKET clientSocket) {
+	::shutdown(clientSocket, SD_BOTH);
+	::closesocket(clientSocket);
+	::EnterCriticalSection(&socket_cs);
+	socket_list.remove(clientSocket);
+	::LeaveCriticalSection(&socket_cs);
 }
 
-void Listener::ObserveClient() {
-	UINT nCount;
-	FD_SET fdRead;
+void Listener::CloseAllClient() {
 	std::list<SOCKET>::iterator it;
-	
-	puts("Start IO MultiPlexing Chatting Server");
-	do {
-		FD_ZERO(&fdRead);
-		for (it = socket_list.begin(); it != socket_list.end(); it++) {
-			FD_SET(*it, &fdRead);
-		}
+	::EnterCriticalSection(&socket_cs);
+	for (it = socket_list.begin(); it != socket_list.end(); it++) {
+		::shutdown(*it, SD_BOTH);
+		::closesocket(*it);
+	}
+	::LeaveCriticalSection(&socket_cs);
+}
 
-		::select(0, &fdRead, NULL, NULL, NULL);
+bool Listener::CloseServer() {
+	CloseAllClient();
 
-		nCount = fdRead.fd_count;
-		for (int idx = 0; idx < nCount; idx++) {
-			if(!FD_ISSET(fdRead.fd_array[idx], &fdRead))
-				continue;
+	::shutdown(listenSocket, SD_BOTH);
+	::closesocket(listenSocket);
+	listenSocket = NULL;
 
-			if (fdRead.fd_array[idx] == listenSocket) {
-				AcceptClient();
+	::CloseHandle(IOCP_Handler);
+	IOCP_Handler = NULL;
+
+	::DeleteCriticalSection(&socket_cs);
+	return TRUE;
+}
+
+DWORD WINAPI Listener::CompleteThreadFunc(LPVOID param) {
+	DWORD transferSize = 0;
+	DWORD flag = 0;
+	Session* pSession = NULL;
+	LPWSAOVERLAPPED pWol = NULL;
+	BOOL result;
+
+	while (1) {
+		result = GetQueuedCompletionStatus(
+			IOCP_Handler, &transferSize, (PULONG_PTR)&pSession, &pWol, INFINITE);
+
+		if (result == TRUE) {
+			if (transferSize == 0) {
+				CloseClient(pSession->clientSocket);
+				delete(pWol);
+				delete(pSession);
 			}
 			else {
-				char buffer[1024] = { 0 };
-				int receive = ::recv(fdRead.fd_array[idx], buffer, sizeof(buffer), 0);
-				if (receive < 0) {
-					::closesocket(fdRead.fd_array[idx]);
-					FD_CLR(fdRead.fd_array[idx], &fdRead);
-					socket_list.remove(fdRead.fd_array[idx]);
-					puts("Client Disconnect");
-				}
-				else
-					puts(buffer);
-					SendChattingMessage(buffer, fdRead.fd_array[idx]);
+				SendChattingMessage(pSession->buffer, pSession->clientSocket);
+				memset(pSession->buffer, 0, sizeof(pSession->buffer));
+
+				DWORD receiveSize = 0;
+				DWORD flag = 0;
+				WSABUF wsaBuf = { 0 };
+				wsaBuf.buf = pSession->buffer;
+				wsaBuf.len = sizeof(pSession->buffer);
+
+				::WSARecv(pSession->clientSocket, &wsaBuf, 1, &receiveSize, &flag, pWol, NULL);
+				if (::WSAGetLastError() != WSA_IO_PENDING)
+					puts("ERROR : WSA Recv() occurred");
 			}
 		}
-	} while (listenSocket != NULL);
+		else {
+			if (pWol == NULL) {
+				puts("ERROR : IOCP Handle Close");
+				break;
+			}
+			else {
+				if (pSession != NULL) {
+					CloseClient(pSession->clientSocket);
+					delete pWol;
+					delete pSession;
+
+				}
+				puts("ERROR : No Server Connection");
+			}
+		}
+	}
+	return 0;
+}
+
+DWORD WINAPI Listener::AcceptThreadFunc(LPVOID param) {
+	LPWSAOVERLAPPED pWol = NULL;
+	DWORD recvSize, flag;
+	Session* pNewUser;
+	int addrSize = sizeof(SOCKADDR);
+	WSABUF wsaBuf;
+	SOCKADDR clientAddr;
+	SOCKET clientSocket;
+	int recvResult = 0;
+
+	while ((clientSocket = ::accept(listenSocket, &clientAddr, &addrSize))) {
+		puts("New Client Connected");
+		::EnterCriticalSection(&socket_cs);
+		socket_list.push_back(clientSocket);
+		::LeaveCriticalSection(&socket_cs);
+
+		pNewUser = new Session;
+		::ZeroMemory(pNewUser, sizeof(Session));
+		pNewUser->clientSocket = clientSocket;
+
+		pWol = new WSAOVERLAPPED;
+		::ZeroMemory(pWol, sizeof(WSAOVERLAPPED));
+
+		::CreateIoCompletionPort((HANDLE)clientSocket, IOCP_Handler, (ULONG_PTR)pNewUser, 0);
+
+		recvSize = 0;
+		flag = 0;
+		wsaBuf.buf = pNewUser->buffer;
+		wsaBuf.len = sizeof(pNewUser->buffer);
+
+		recvResult = ::WSARecv(clientSocket, &wsaBuf, 1, &recvSize, &flag, pWol, NULL);
+		if (::WSAGetLastError() != WSA_IO_PENDING)
+			puts("ERROR : WSARecv not pending error");
+	}
+
+	return 0;
+}
+
+DWORD WINAPI CompleteThread(LPVOID param) {
+	return (pListener->CompleteThreadFunc(param));
+}
+DWORD WINAPI AcceptThread(LPVOID param) {
+	return (pListener->AcceptThreadFunc(param));
+}
+
+void Listener::StartProgram() {
+	HANDLE thread;
+	
+	DWORD threadID;
+	
+
+	ResetWinsock();
+	InitIOCPHandler();
+	InitializeCriticalSection(&socket_cs);
+	CreateSocket();
+	BindPort();
+	WaitingClient(listenSocket);
+
+	for (int i = 0; i < MAX_THREAD_CNT; i++) {
+		threadID = 0;
+
+		thread = ::CreateThread(NULL, 0, CompleteThread, (LPVOID)NULL, 0, &threadID);
+
+		::CloseHandle(thread);
+	}
+
+	thread = ::CreateThread(NULL, 0, AcceptThread, (LPVOID)NULL, 0, &threadID);
+	::CloseHandle(thread);
+
+	puts("Start Chat Server");
+	while (1)
+		getchar();
+	return;
 }
