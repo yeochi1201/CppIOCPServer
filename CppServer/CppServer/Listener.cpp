@@ -33,6 +33,15 @@ bool Listener::InitCtrlHandler() {
 	return TRUE;
 }
 
+bool Listener::InitIOCPHandler() {
+	IOCP_Handler = ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+	if (IOCP_Handler == NULL) {
+		puts("ERROR : Cant Create IOCP");
+		return FALSE;
+	}
+	return TRUE;
+}
+
 void Listener::SendChattingMessage(char* pszParam, SOCKET clientSocket) {
 	int msgLength = strlen(pszParam);
 	std::list<SOCKET>::iterator it;
@@ -228,6 +237,8 @@ void Listener::StartProgram() {
 
 	ResetWinsock();
 	InitCtrlHandler();
+	InitIOCPHandler();
+
 	CreateSocket();
 	BindPort();
 	WaitingClient(listenSocket);
@@ -242,7 +253,6 @@ void Listener::StartProgram() {
 
 		::CloseHandle(thread);
 	}
-
 	puts("Start Chat Server");
 	while (1)
 		getchar();

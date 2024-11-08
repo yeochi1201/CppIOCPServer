@@ -51,7 +51,7 @@ private:
 	
 	//Handler
 	bool InitCtrlHandler();
-
+	bool InitIOCPHandler();
 
 };
 #endif
