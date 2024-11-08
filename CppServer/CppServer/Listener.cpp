@@ -236,15 +236,11 @@ void Listener::StartProgram() {
 	
 
 	ResetWinsock();
-	InitCtrlHandler();
 	InitIOCPHandler();
-
+	InitializeCriticalSection(&socket_cs);
 	CreateSocket();
 	BindPort();
 	WaitingClient(listenSocket);
-
-	thread = ::CreateThread(NULL, 0, AcceptThread, (LPVOID)NULL, 0, &threadID);
-	::CloseHandle(thread);
 
 	for (int i = 0; i < MAX_THREAD_CNT; i++) {
 		threadID = 0;
@@ -253,6 +249,10 @@ void Listener::StartProgram() {
 
 		::CloseHandle(thread);
 	}
+
+	thread = ::CreateThread(NULL, 0, AcceptThread, (LPVOID)NULL, 0, &threadID);
+	::CloseHandle(thread);
+
 	puts("Start Chat Server");
 	while (1)
 		getchar();
