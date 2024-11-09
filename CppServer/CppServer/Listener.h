@@ -22,7 +22,6 @@ typedef struct Session {
 
 class Listener {
 public:
-
 	std::list<SOCKET> socket_list;
 	CRITICAL_SECTION socket_cs;
 	Listener();
@@ -52,6 +51,5 @@ private:
 	//Handler
 	bool InitCtrlHandler();
 	bool InitIOCPHandler();
-
 };
 #endif
